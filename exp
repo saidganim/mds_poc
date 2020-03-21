@@ -1,0 +1,1 @@
+(for i in $(seq 1 $2); do $1; done)  |  awk  'NF==1{arr[$1]++}END{for (a in arr) print a, arr[a]}'
