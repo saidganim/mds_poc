@@ -1,10 +1,15 @@
 CC = gcc
 CFLAGS = -g3 -O0
 
-build:  fall_TAA.c fall_TLBMISS.c fall_clearbit.c
+user:  fall_TAA.c fall_TLBMISS.c fall_clearbit.c
 	$(CC) fall_TAA.c $(CFLAGS) -o taasupress
 	$(CC) fall_TLBMISS.c $(CFLAGS) -o tlbmiss
 	$(CC) fall_clearbit.c $(CFLAGS) -o clearbit
+
+
+
+
+build:  user
 	$(MAKE) module_install
 
 module_install:

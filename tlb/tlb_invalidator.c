@@ -11,7 +11,14 @@
 #include <asm/paravirt.h>
 #include <asm/pgtable_types.h>
 #include <asm/page_types.h>
+#include <asm/tlbflush.h>
 
+
+
+static __inline void invlpg(void *addr)
+{
+    __asm __volatile("invlpg (%0)" : : "r" (addr) : "memory");
+}
 
 //  This is the simplest interface between
 //  userspace and kernelspace, which is introduced by the misc device file.
@@ -22,11 +29,41 @@ MODULE_AUTHOR("Saidgani Musaev <TUD SE/chair>");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Misc Device Driver for tlb_flush_all and clear_accessed_bit interfaces");
 
+//void (*flush_tlb_all)(void) = NULL;
 
-static void (*flush_tlb_all)(void) = 0;
+static void do_flush_tlb_all(void *info)
+{
+	count_vm_tlb_event(NR_TLB_REMOTE_FLUSH_RECEIVED);
+	__flush_tlb_all();
+}
 
-ssize_t read_op(struct file* filep, char __user * buf, size_t len, loff_t *offset){
-    return len;
+
+void flush_tlb_all(void)
+{
+	count_vm_tlb_event(NR_TLB_REMOTE_FLUSH);
+	on_each_cpu(do_flush_tlb_all, NULL, 1);
+}
+const int offsetg = 16;
+volatile char* ptr = 0x0;
+volatile char* ptrf = 0x0;
+
+ssize_t __attribute((optimize("O1")))read_op(struct file* filep, char __user * buf, size_t len, loff_t *offset){
+	int i;
+	//memset(ptrf, (char)0xfb, 0x2000);
+	//for( i = 0; i < 0x2000; ++i)
+	ptr[offsetg] = 0xfb;
+//	invlpg(ptr);
+	//invlpg(ptr);
+	//printk("charged SB with address %px\n", &ptr[offsetg]);
+//	ptr[offsetg+1] = (char)0x0;
+	//for( i = 0; i < 0x2000; ++i){
+		//if(i == offsetg)
+		//	continue;
+	//	copy_to_user(&buf[i], &ptrf[i], 1);
+	//}
+//	copy_to_user(&buf[offsetg], &ptr[offsetg], 1);
+	//invlpg(buf);
+    	return 0;
 }
 
 ssize_t write_op(struct file* filep, const char __user * buf, size_t len, loff_t *offset){
@@ -38,7 +75,7 @@ ssize_t write_op(struct file* filep, const char __user * buf, size_t len, loff_t
     pte_t new_pte;
     unsigned long vaddr = (unsigned long)buf;
     if(!buf){
-        flush_tlb_all();
+	flush_tlb_all();
         goto ret_;
     }
 	pgd =  pgd_offset(current->mm, vaddr);// + pgd_index(vaddr);
@@ -89,25 +126,27 @@ struct file_operations my_dev_fops = {
 struct miscdevice my_dev = {
     .minor = MY_DEV_MINOR,
     .fops = &my_dev_fops,
-    .name = MY_DEV_NODENAME,
+    .name = "tlb_invalidator",
     .mode = 0666,
 };
 
 
 int __init my_dev_reg(void){
     int res = 0;
+    //flush_tlb_all = (void*)kallsyms_lookup_name("flush_tlb_all");
     res = misc_register(&my_dev);
-    flush_tlb_all = (void*)kallsyms_lookup_name("flush_tlb_all");
+    ptrf = kmalloc(0x2000, GFP_KERNEL);
+    ptr = (char*)((uint64_t)(&(ptrf[0x1000]) ) & ~0xFFF);
+    printk("Address %llu : %llu\n", ptr, ptrf);
+    printk("Address2 %px : %px\n", ptr, ptrf);
+    printk("Address3 %px : %px\n", &ptr[offsetg], &ptrf[offsetg]);
     if(res)
         pr_err("Cannot misc_register\n");
-    if(!flush_tlb_all){
-        pr_err("Cannot find flush_tlb_all symbol in kernel\n");
-        return -ENOENT;
-    }
     return res;
 }
 
 void __exit release_dev(void){
+   //kfree(ptrf);
    misc_deregister(&my_dev);
 }
 
