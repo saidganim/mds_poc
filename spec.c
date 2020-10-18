@@ -13,7 +13,7 @@
 #define __USE_GNU
 #include <signal.h>
 #include <ucontext.h>
-#define PG_SIZE (4096U*1)
+#define PG_SIZE (4096U*16)
 #define NUM_EXPR 10
 #define NUM_ROUNDS 10
 #define TENREP(a)     a;a;a;a;a;a;a;a;a;a

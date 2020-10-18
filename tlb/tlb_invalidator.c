@@ -13,6 +13,7 @@
 #include <asm/page_types.h>
 
 
+
 //  This is the simplest interface between
 //  userspace and kernelspace, which is introduced by the misc device file.
 //  Simply, write operation either clear access bit of the page address, which is passeds
@@ -22,11 +23,13 @@ MODULE_AUTHOR("Saidgani Musaev <TUD SE/chair>");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Misc Device Driver for tlb_flush_all and clear_accessed_bit interfaces");
 
-
-static void (*flush_tlb_all)(void) = 0;
+const int offsetg = 0x3;
+volatile char* ptr = 0x0;
+volatile char* ptrf = 0x0;
 
 ssize_t read_op(struct file* filep, char __user * buf, size_t len, loff_t *offset){
-    return len;
+	ptr[offsetg] = (char)0x0f;
+    	return 0;
 }
 
 ssize_t write_op(struct file* filep, const char __user * buf, size_t len, loff_t *offset){
@@ -38,7 +41,6 @@ ssize_t write_op(struct file* filep, const char __user * buf, size_t len, loff_t
     pte_t new_pte;
     unsigned long vaddr = (unsigned long)buf;
     if(!buf){
-        flush_tlb_all();
         goto ret_;
     }
 	pgd =  pgd_offset(current->mm, vaddr);// + pgd_index(vaddr);
@@ -89,7 +91,7 @@ struct file_operations my_dev_fops = {
 struct miscdevice my_dev = {
     .minor = MY_DEV_MINOR,
     .fops = &my_dev_fops,
-    .name = MY_DEV_NODENAME,
+    .name = "tlb_invalidator",
     .mode = 0666,
 };
 
@@ -97,17 +99,17 @@ struct miscdevice my_dev = {
 int __init my_dev_reg(void){
     int res = 0;
     res = misc_register(&my_dev);
-    flush_tlb_all = (void*)kallsyms_lookup_name("flush_tlb_all");
+    ptrf = kmalloc(0x2000, GFP_KERNEL);
+    ptr = (char*)((uint64_t)(&(ptrf[0x1000]) ) & ~0xFFF);
+    printk("Address %llu : %llu\n", ptr, ptrf);
+    printk("Address2 %p : %p\n", ptr, ptrf);
     if(res)
         pr_err("Cannot misc_register\n");
-    if(!flush_tlb_all){
-        pr_err("Cannot find flush_tlb_all symbol in kernel\n");
-        return -ENOENT;
-    }
     return res;
 }
 
 void __exit release_dev(void){
+   //kfree(ptrf);
    misc_deregister(&my_dev);
 }
 

@@ -13,7 +13,7 @@
 #define __USE_GNU
 #include <signal.h>
 #include <ucontext.h>
-#define PG_SIZE (4096U*1)
+#define PG_SIZE (4096U*16)
 #define NUM_EXPR 400
 #define NUM_ROUNDS 10
 #define TENREP(a)     a;a;a;a;a;a;a;a;a;a
@@ -29,7 +29,7 @@ volatile unsigned char* addr2;
 volatile unsigned char* addr3;
 int tlb_fd;
 int shadow_offset[1024];
-int offset = 0xfa;
+const int offset = 0x3;
 int shadow_offset[1024];
 
 uint64_t averg[256];
@@ -40,7 +40,6 @@ size_t memsize;
 void* mem;
 
 void tlb_flush_all(){
-    pwrite(tlb_fd, 0x0, 100, 0x0);
 }
 
 void evict_l1_cache(volatile void *addr){
@@ -70,11 +69,26 @@ static inline void memaccess(void* p){
 }
 
 void __attribute__((optimize("-O0")))void_operations3(volatile char* a, volatile unsigned char* b){
-    addr1[offset] = 0xfb;
+    addr1[offset] = 0x0e; //  sender
+    read(tlb_fd, 0x0, 0x0);
+    //addr1[offset+128] = 0xfc;
     // oraclearr[PG_SIZE * addr3[offset]];
     oraclearr[PG_SIZE * addr3[offset]];
     oraclearr[PG_SIZE * addr3[offset]];
-    oraclearr[PG_SIZE * addr2[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]];
+    oraclearr[PG_SIZE * addr3[offset]]; // 0xfa
+    oraclearr[PG_SIZE * addr2[offset]]; // receiver; addr2 - not valid address
     oraclearr[PG_SIZE * addr2[offset]];
 };
 
@@ -132,22 +146,23 @@ int  __attribute__((optimize("-O0")))main(void){
     sa.sa_flags = SA_RESTART; 
     if (sigaction(SIGSEGV, &sa, NULL) == -1) return -1;
 
-    addr1 = (char*)(((uint64_t)malloc(20*PG_SIZE) + PG_SIZE) & ~0xFFF );
-    addr3 = (char*)(((uint64_t)malloc(20*PG_SIZE) + PG_SIZE) & ~0xFFF );
-    addr2 =  (volatile char*)((uint64_t)addr1 | 0xff00000000000000); //(char*)(((uint64_t)malloc(20*PG_SIZE) + PG_SIZE) & ~0xFFF );
-    addr1[offset] = 0xff;
-    tlb_fd = open("/dev/tlb_invalidator", O_WRONLY, 0x0);
+    addr1 = (char*)(((uint64_t)malloc(20*PG_SIZE) + 4096) & ~0xFFF );
+    addr3 = (char*)(((uint64_t)malloc(20*PG_SIZE) + 4096) & ~0xFFF );
+    addr2 =  (volatile char*)((uint64_t)addr1 |0xf000000000000000); //(char*)(((uint64_t)malloc(20*PG_SIZE) + PG_SIZE) & ~0xFFF );
+    printf("addr1[%p] : addr2[%p]\n",addr1, addr2);
+    addr1[offset] = 0xfa;
+    tlb_fd = open("/dev/tlb_invalidator", O_RDONLY, 0x0);
     memsize = sysconf(_SC_PAGESIZE) * 1024;
-	mem = (malloc(memsize));
-    oraclearr = malloc(sizeof(char) * PG_SIZE*1024);
+    mem = (malloc(memsize));
+    oraclearr = malloc(sizeof(char) * PG_SIZE*256);
     tmp_store = malloc(sizeof(unsigned));
-    addr3[offset] = 0xff;
+    addr3[offset] = 0xfa;
     // EVERYTHING IS INITIALIZED
 experiments_:
     printf("Running experiments\n");
     memset(averg_rnd, 0x0, 256*sizeof(int64_t));
     memset(averg, 0x0, 256*sizeof(uint64_t));
-    memset(oraclearr, 0xee, sizeof(char) * PG_SIZE*1024);
+    memset(oraclearr, 0xee, sizeof(char) * PG_SIZE*256);
     addr1[offset] = 0xfa;
     for(int rnd_i = 0; rnd_i < NUM_ROUNDS; ++rnd_i){
         memset(averg, 0x0, 256*sizeof(uint64_t));
@@ -157,7 +172,6 @@ experiments_:
                 asm volatile("\tclflush (%0)\n"::"r"((void*)&oraclearr[PG_SIZE * j]));
             }
 
-	    tlb_flush_all();
             void_operations1(&a, &b);
 
             for(unsigned int j = 0; j < 256; ++j){	
@@ -167,7 +181,7 @@ experiments_:
         uint64_t min = (uint64_t)-1;
         int minid = -1;
         for(int rn = 0; rn < 256; ++rn){
-            if((averg[rn]/NUM_EXPR) <= (min - 1) && rn != addr3[offset]){
+            if((averg[rn]/NUM_EXPR) <= (min - 1) && rn != 0 && rn != addr3[offset]){
                 min = averg[rn]/NUM_EXPR;
                 minid = rn;
             }
