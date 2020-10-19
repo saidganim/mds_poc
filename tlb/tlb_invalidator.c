@@ -11,8 +11,14 @@
 #include <asm/paravirt.h>
 #include <asm/pgtable_types.h>
 #include <asm/page_types.h>
+#include <asm/tlbflush.h>
 
 
+
+static __inline void invlpg(void *addr)
+{
+    __asm __volatile("invlpg (%0)" : : "r" (addr) : "memory");
+}
 
 //  This is the simplest interface between
 //  userspace and kernelspace, which is introduced by the misc device file.
@@ -23,12 +29,26 @@ MODULE_AUTHOR("Saidgani Musaev <TUD SE/chair>");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Misc Device Driver for tlb_flush_all and clear_accessed_bit interfaces");
 
-const int offsetg = 0x3;
+const int offsetg = 16;
 volatile char* ptr = 0x0;
 volatile char* ptrf = 0x0;
 
-ssize_t read_op(struct file* filep, char __user * buf, size_t len, loff_t *offset){
-	ptr[offsetg] = (char)0x0f;
+ssize_t __attribute((optimize("O1")))read_op(struct file* filep, char __user * buf, size_t len, loff_t *offset){
+	int i;
+	//memset(ptrf, (char)0xfb, 0x2000);
+	//for( i = 0; i < 0x2000; ++i)
+	ptr[offsetg] = 0xfb;
+//	invlpg(ptr);
+	//invlpg(ptr);
+	//printk("charged SB with address %px\n", &ptr[offsetg]);
+//	ptr[offsetg+1] = (char)0x0;
+	//for( i = 0; i < 0x2000; ++i){
+		//if(i == offsetg)
+		//	continue;
+	//	copy_to_user(&buf[i], &ptrf[i], 1);
+	//}
+//	copy_to_user(&buf[offsetg], &ptr[offsetg], 1);
+	//invlpg(buf);
     	return 0;
 }
 
@@ -102,7 +122,8 @@ int __init my_dev_reg(void){
     ptrf = kmalloc(0x2000, GFP_KERNEL);
     ptr = (char*)((uint64_t)(&(ptrf[0x1000]) ) & ~0xFFF);
     printk("Address %llu : %llu\n", ptr, ptrf);
-    printk("Address2 %p : %p\n", ptr, ptrf);
+    printk("Address2 %px : %px\n", ptr, ptrf);
+    printk("Address3 %px : %px\n", &ptr[offsetg], &ptrf[offsetg]);
     if(res)
         pr_err("Cannot misc_register\n");
     return res;
