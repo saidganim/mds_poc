@@ -25,6 +25,7 @@
 #define CACHELSZ 64
 #define PRIME_PREFETCH 457
 
+unsigned short secret_val = 0xc0;
 volatile char *oraclearr;
 volatile unsigned *tmp_store;
 volatile unsigned short* addr1;
@@ -84,7 +85,13 @@ void __attribute__((optimize("-Os")))void_operations3(volatile char* a, volatile
     //read(tlb_fd, addr1, 0x0);
     //addr1[offset+128] = 0xfc;
     // oraclearr[PG_SIZE * addr3[offset]];
-    for(int i = 0; i < 20; ++i)sched_yield();
+    // lets populate full cache set with some trash
+    
+    for(int i = 0; i < 256; ++i){
+    	addr3[offset+4096*i] = 0xc5;
+    }
+    asm volatile("mfence");
+    for(int i = 0; i < 20; ++i)sched_yield(); // this thing should populate cache with something else
     oraclearr[PG_SIZE * addr3[offset]];
     oraclearr[PG_SIZE * addr3[offset]]; // 0xfa
     oraclearr[PG_SIZE * addr2[offset]]; // receiver; addr2 - not valid address
@@ -149,6 +156,10 @@ int  __attribute__((optimize("-O0")))main(int argc, char** argv){
     int64_t a = 100000000,b = 100;
     void* addr2s;
     struct sigaction sa;
+    int repeat = 0;
+    unsigned short* shared_mem = ((char*)mmap(0x0, 0x1000, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON, -1, 0x0) + 128);
+
+
     cpu_set_t my_set;
     sa.sa_handler = (void (*)(int))handler;
     sigemptyset(&sa.sa_mask);
@@ -156,7 +167,7 @@ int  __attribute__((optimize("-O0")))main(int argc, char** argv){
     if (sigaction(SIGSEGV, &sa, NULL) == -1) return -1;
 
     addr1 = (char*)(((uint64_t)malloc(20*PG_SIZE) + 4096) & ~0xFFF );
-    addr3 = (char*)(((uint64_t)malloc(20*PG_SIZE) + 4096) & ~0xFFF );
+    addr3 = (char*)(((uint64_t)malloc(256*PG_SIZE) + 4096) & ~0xFFF );
     addr2 = (volatile char*)((((uint64_t)addr1) & 0xffffffffffffffff  | 0xffff000000000000 ) ); //(char*)(((uint64_t)malloc(20*PG_SIZE) + PG_SIZE) & ~0xFFF );
     addr2s = addr2;
     printf("addr1[%p] : addr2[%p]\n",addr1, addr2);
@@ -172,16 +183,21 @@ int  __attribute__((optimize("-O0")))main(int argc, char** argv){
     tmp_store = malloc(sizeof(unsigned));
     addr3[offset] = 0xfa;
     pthread_t thread;
-    uint64_t mask_c = 0x0000;
+    uint64_t mask_c = 0x000000000; //0x0000;
 //    pthread_create(&thread, NULL, sibl_thread, NULL);
     // EVERYTHING IS INITIALIZED
+    if(!addr3){
+    	printf("Not enough memory\n");
+	exit(1);
+    
+    }
     if(!fork()){
 //		CPU_ZERO(&my_set);       /* Initialize it all to 0, i.e. no CPUs selected. */
 //		CPU_SET(1, &my_set);     /* set the bit that represents core 7. */
 //		//sched_setaffinity(0, sizeof(cpu_set_t), &my_set);
 //
 		while(1){
-			addr1[offset] = 0xc1;
+			addr1[offset] = *shared_mem;
 		}
 	
 	}
@@ -204,7 +220,8 @@ experiments_:
                 asm volatile("\tclflush (%0)\n"::"r"((void*)&oraclearr[PG_SIZE * j]));
             }
             
-	    
+	    secret_val ^= 0x01; // toogle the last bit
+	    *shared_mem = secret_val;
 	    asm volatile("mfence");
 	    void_operations1(&a, &b);
 
@@ -240,16 +257,18 @@ experiments_:
         //printf("Not egnough confidence\n");
         goto experiments_;
     }
-    if( (averg_rnd[0xc1] >= 5) || (averg_rnd[0xc2] >= 5)){
-    	printf("\nPOssible candidate of the mask %p, with weight %d; ptr valid %d\n",mask_c, averg_rnd[0xc1], is_pointer_valid(addr2));
-    	printf("POssible candidate of the mask %p, with weight %d; ptr valid %d\n",mask_c, averg_rnd[0xc2], is_pointer_valid(addr2));
-	mask_c -= 0x1000;
+    if( (averg_rnd[secret_val] >= 5 && (averg_rnd[secret_val] <= 14))){
+    	printf("\nPOssible candidate [%p] of the mask %p, with weight %d; ptr valid %d\n", secret_val, mask_c, averg_rnd[secret_val], is_pointer_valid(addr2));
+	repeat = 1;
     } else {
     	printf("\rtrying mask %p", mask_c);
     }
+    if(repeat)
+	mask_c -= 0x1000;
+	    	
     //printf("\nWinner is 0x%02x [%c], weight - %d\n", winner, winner, averg_rnd[winner]);
     fflush(stdout);
-    if(mask_c <= (0x1ULL << 48)){
+    if(mask_c <= (0x1ULL << 63)){
 	   mask_c += 0x1000;
 	   goto experiments_;
     }
